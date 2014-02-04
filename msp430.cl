@@ -12,7 +12,7 @@
 
 (defvar *mem* (make-array 65536 :element-type '(UNSIGNED-BYTE 8)))
 
-(defvar *input* "00000000000000000000000000000000f9")
+(defvar *input*)
 
 (defvar *console* "console:")
 (setf *console* "console:")
