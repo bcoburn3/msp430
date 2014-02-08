@@ -15,10 +15,8 @@
 (defvar *input*)
 
 (defvar *console* "console:")
-(setf *console* "console:")
 
 (defvar *err*)
-(setf *err* "null")
 
 (defvar *dep* nil)
 
@@ -109,7 +107,7 @@
 (defun main ()
   (setf *reg* (make-array 16 :element-type '(unsigned-byte 16)))
   (set-reg 0 #x4400)
-  (loop repeat 10000
+  (loop ;repeat 10000
      while (emu-step)
        do (if *unlocked*
 	      (return-from main "victory"))))
@@ -153,12 +151,13 @@
   (print "getsn")
   (format t "~4,'0x" start)
   (print num)
-  (loop for i from 0 to (- (/ (length *input*) 2) 1)
+  (print (car *input*))
+  (let ((cur-input (car *input*)))
+    (loop for i from 0 to (- (/ (length cur-input) 2) 1)
        while (<= i num)
-       for char = (hex-string-to-int (subseq *input* (* i 2) (* (+ i 1) 2)))
-       do (set-mem (+ start i) char)
-       (print char)
-       (print (subseq *input* (* i 2) (* (+ i 1) 2)))))
+       for char = (hex-string-to-int (subseq cur-input (* i 2) (* (+ i 1) 2)))
+       do (set-mem (+ start i) char)))
+  (setf *input* (cdr *input*)))
   
 
 (defun instruction-decode (bytes)
@@ -173,9 +172,9 @@
 	  ((>= (ldb (byte 4 12) instn) 4) (double-decode instn data1 data2)))))
 
 (defun address-decode (ad dest data)
-  (print ad)
-  (print dest)
-  (format t "~4,'0x"  data)
+; (print ad)
+;  (print dest)
+;  (format t "~4,'0x"  data)
   ;decodes an address for a single operand instruction
   ;returns an integer representing the current value and a function that sets the new value
   (if (or (= dest 2) (= dest 3))
@@ -183,8 +182,6 @@
 	  (cond ((= ad 0) (values (reg dest)
 				  (reg-fun dest))) ;register mode
 		((= ad 1) (progn (incf (elt *reg* 0) 2)
-				 (print "abs mode")
-				 (print (get-mem data))
 				 (values (get-mem data)
 					 (mem-fun data))));absolute mode
 		((= ad 2) (values 4 4)) ;represents a constant, can't set things
@@ -208,12 +205,8 @@
 				     (mem-fun (- (reg dest) 2))))) ;indirect mode with increment
 	    (t 'nil)))) 
 
-(eval-when (:execute)
-  (print (nth-value 1 (address-decode 1 15 9216)))
-  (print (nth-value 1 (address-decode 1 15 18164))))
-
 (defun single-decode (instn data)
-  (print "single-op")
+;  (print "single-op")
   (incf (elt *reg* 0) 2)
   ;decodes and calls a single operand instruction
   (let ((opcode (ldb (byte 3 7) instn))
@@ -224,8 +217,8 @@
 		 8)))
     (multiple-value-bind (value set-fun)
 	(address-decode ad dest data)
-      (print value)
-      (print set-fun)
+ ;     (print value)
+ ;     (print set-fun)
       (cond ((= opcode 0) (rrc value set-fun b-w))
 	    ((= opcode 1) (swpb value set-fun))
 	    ((= opcode 2) (rra value set-fun b-w))
@@ -236,7 +229,7 @@
 	      ;RETI isn't implemented because it's not in the CTF
 
 (defun rrc (value set-fun b-w)
-  (print "rrc")
+;  (print "rrc")
   (let ((carry (ldb (byte 1 0) value))
 	(tmp (ash (trim-bw value b-w) -1)))
     (let ((res (dpb (get-c) (byte 1 (+ b-w 7)) tmp)))
@@ -249,13 +242,13 @@
 	  (set-z 0)))))
 
 (defun swpb (value set-fun)
-  (print "swpb")
+;  (print "swpb")
   (let ((low (ldb (byte 8 8) value))
 	(high (ldb (byte 8 0) value)))
     (funcall set-fun (+ (* 256 high) low))))
 
 (defun rra (value set-fun b-w)
-  (print "rra")
+;  (print "rra")
   (let ((res (ash (trim-bw value b-w) -1)))
     (funcall set-fun (trim-bw res b-w))
     (if (= (negp res b-w) 1)
@@ -264,7 +257,7 @@
     (set-z 0)))
 
 (defun sxt (value set-fun)
-  (print "sxt")
+;(print "sxt")
   (let ((res (dpb (* 255 (ldb (byte 1 7) value)) (byte 8 8) value)))
     (funcall set-fun res)
     (set-c (if (= res 0)
@@ -275,31 +268,34 @@
     (set-z (nullp res))))
 
 (defun psh (value set-fun b-w)
-  (print "psh")
-  (format t "~4,'0x" value)
+;  (print "psh")
+;  (format t "~4,'0x" value)
   (incf (elt *reg* 1) -2)
   (set-mem (reg 1) (trim-bw value b-w)))
 
 (defun call (value set-fun)
-  (print "call")
-  (format t "~4,'0x" value)
+;  (print "call")
+;  (format t "~4,'0x" value)
   (psh (+ (reg 0) 0) nil 8)
   (setf (elt *reg* 0) value))
 
 (defun jump-decode (instn)
-  (print "jump")
-  (format t "~4,'0x" instn)
+;  (print "jump")
+;  (format t "~4,'0x" instn)
   (let ((type (ldb (byte 3 10) instn))
 	(offset (ldb (byte 10 0) instn))
 	(z (flag 1))
 	(c (flag 0))
 	(n (flag 2))
 	(v (flag 8)))
-    (cond ((= type 0) (if (= z 0) (jmp offset)
+    (cond ((= type 0) (if (= z 0) 
+			  (jmp offset)
 			  (incf (elt *reg* 0) 2)))
-	  ((= type 1) (if (= z 1) (jmp offset)
+	  ((= type 1) (if (= z 1) 
+			  (jmp offset)
 			  (incf (elt *reg* 0) 2)))
-	  ((= type 2) (if (= c 0) (jmp offset)
+	  ((= type 2) (if (= c 0) 
+			  (jmp offset)
 			  (incf (elt *reg* 0) 2)))
 	  ((= type 3) (if (= c 1) (jmp offset)
 			  (incf (elt *reg* 0) 2)))
@@ -312,18 +308,18 @@
 	  ((= type 7) (jmp offset)))))
 
 (defun jmp (offset)
-  (print offset)
-  (print (ldb (byte 9 0) offset))
-  (print (* (ldb (byte 1 9) offset) 1024))
-  (print (- (* 2 (- (ldb (byte 9 0) offset)
-		    (* (ldb (byte 1 9) offset) 512)))))
+;  (print offset)
+;  (print (ldb (byte 9 0) offset))
+;  (print (* (ldb (byte 1 9) offset) 1024))
+;  (print (- (* 2 (- (ldb (byte 9 0) offset)
+;		    (* (ldb (byte 1 9) offset) 512)))))
   (setf (elt *reg* 0) (+ (reg 0) 2
 			 (* 2 (- (ldb (byte 9 0) offset)
 				 (* (ldb (byte 1 9) offset) 512)))))
   t)
 
 (defun double-decode (instn data1 data2)
-  (print "double-op")
+;  (print "double-op")
   (incf (elt *reg* 0) 2)
   (let ((opcode (ldb (byte 4 12) instn))
 	(source (ldb (byte 4 8) instn))
@@ -336,14 +332,16 @@
     (multiple-value-bind (source-val source-fun)
 	(address-decode as source data1)
       (multiple-value-bind (dest-val dest-fun)
-	  (address-decode ad dest data2)
+	  (address-decode ad dest (if (= (ldb (byte 1 0) as) 1)
+				      data2    ;use the second extension word if
+				      data1))  ;the first was used in the source
 ;      (let* ((source-lst (multiple-value-list (address-decode as source data1)))
 ;	     (source-val (car source-lst)))
 ;	(print source-lst)
-	(print "source")
-	(format t "~4,'0x" source-val)
-	(print "dest")
-	(format t "~4,'0x" dest-val)
+;	(print "source")
+;	(format t "~4,'0x" source-val)
+;	(print "dest")
+;	(format t "~4,'0x" dest-val)
 	(cond ((= opcode 4) (mov source-val dest-fun b-w))
 	      ((= opcode 5) (add source-val dest-val dest-fun b-w))
 	      ((= opcode 6) (addc source-val dest-val dest-fun b-w))
@@ -359,10 +357,10 @@
 	      (t 'nil))))))
 
 (defun mov (val dest-fun b-w)
-  (print "mov")
-  (format t "~4,'0x"  val)
-  (print dest-fun)
-  (print b-w)
+;  (print "mov")
+;  (format t "~4,'0x"  val)
+;  (print dest-fun)
+;  (print b-w)
   (funcall dest-fun (trim-bw val b-w)))
 
 (defun add-flags (res b-w)
@@ -372,38 +370,40 @@
   (set-z (nullp res)))
 
 (defun add (source-val dest-val dest-fun b-w)
-  (print "add")
+;  (print "add")
   (let ((res (+ (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (funcall dest-fun (trim-bw res b-w))
     (add-flags res b-w)))
 
 (defun addc (source-val dest-val dest-fun b-w)
-  (print "addc")
+;  (print "addc")
   (let ((res (+ (trim-bw source-val b-w) (trim-bw dest-val b-w) (get-c))))
     (funcall dest-fun (trim-bw res b-w))
     (add-flags res b-w)))
 
 (defun subc (source-val dest-val dest-fun b-w)
-  (print "subc")
+;  (print "subc")
   (let ((res (+ (trim-bw dest-val b-w) (lognot (trim-bw source-val b-w)) (get-c) 1))) ;random +1 for bug compat
     (funcall dest-fun (trim-bw res b-w))
     (add-flags res b-w)))
 
 (defun sub (source-val dest-val dest-fun b-w)
-  (print "sub")
-  (let ((res (+ (trim-bw dest-val b-w) (lognot (trim-bw source-val b-w)) 1)))
+;  (print "sub")
+  (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
     (funcall dest-fun (trim-bw res b-w))
     (add-flags res b-w)))
 
 (defun cmp (source-val dest-val b-w)
-  (print "cmp")
-  (format t "~4,'0x"  source-val)
-  (format t "~4,'0x"  dest-val)
-  (let ((res (+ (trim-bw dest-val b-w) (lognot (trim-bw source-val b-w)) 1)))
+;  (print "cmp")
+;  (format t "~4,'0x"  source-val)
+;  (format t "~4,'0x"  dest-val)
+;  (print b-w)
+  (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
     (add-flags res b-w)))
+;  (print (reg 2)))
 
 (defun dadd (source-val dest-val dest-fun b-w)
-  (print "dadd")
+;  (print "dadd")
   (let ((trim-s (trim-bw source-val b-w))
 	(trim-d (trim-bw dest-val b-w)))
     (let ((res (loop for i in (list 0 4 8 12)
@@ -424,7 +424,7 @@
       (funcall dest-fun (trim-bw res b-w)))))
 
 (defun emu-bit (source-val dest-val b-w)
-  (print "emu-bit")
+;  (print "emu-bit")
   (let ((res (logand (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (set-v 0)
     (set-n (ldb (byte 1 (+ b-w 7)) res))
@@ -432,16 +432,16 @@
     (set-c (nullp res))))
 
 (defun bic (source-val dest-val dest-fun b-w)
-  (print "bic")
+;  (print "bic")
   (let ((res (logand (lognot (trim-bw source-val b-w)) (trim-bw dest-val b-w))))
     (funcall dest-fun (trim-bw res b-w))))
 
 (defun bis (source-val dest-val dest-fun b-w)
-  (print "bis")
+;  (print "bis")
   (funcall dest-fun (trim-bw (logior (trim-bw source-val b-w) (trim-bw dest-val b-w)) b-w)))
 
 (defun xor (source-val dest-val dest-fun b-w)
-  (print "xor")
+;  (print "xor")
   (let ((res (logxor (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (funcall dest-fun (trim-bw res b-w))
     (set-v 0)
@@ -450,7 +450,7 @@
     (set-c (nullp res))))
 
 (defun emu-and (source-val dest-val dest-fun b-w)
-  (print "emu-and")
+;  (print "emu-and")
   (let ((res (logand (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (funcall dest-fun (trim-bw res b-w))
     (set-v 0)
@@ -489,8 +489,22 @@
   (hex-string-to-int 
    (concatenate 'string (subseq str 2 4) (subseq str 0 2))))
 
-(eval-when (:execute)
-  (import-file "c:\\ben\\hanoi.txt")
+(defun reset ()
+  (setf *reg* (make-array 16 :element-type '(UNSIGNED-BYTE 16)))
+  (setf *mem* (make-array 65536 :element-type '(UNSIGNED-BYTE 8)))
+  (setf *err* "null")
+  (setf *console* "console:")
+  (setf *unlocked* nil))
+
+(defun run-level (file-name input)
+  (reset)
+  (print "start of run")
+  (import-file file-name)
+  (setf *input* input)
   (main)
+  (print file-name)
+  (print *console*)
+  (print "error:")
   (print *err*)
+  (print "unlocked?")
   (print *unlocked*))
