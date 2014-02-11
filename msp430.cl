@@ -74,16 +74,16 @@
 
 (defun set-mem (idx int b-w)
   ;(print "set-mem")
-  ;(format t "~4,'0x" (get-mem idx))
+ ;(format t "~4,'0x" (get-mem idx))
   ;(print "idx")
-  ;(format t "~4,'0x" idx)
+ ;(format t "~4,'0x" idx)
   (let* ((low (mod int 256))
 	 (high (/ (- int low) 256)))
     (if (= b-w 0)
 	(setf (elt *mem* idx) low)
 	(setf (elt *mem* idx) low
 	      (elt *mem* (+ idx 1)) high)))
-  ;(print "res")
+  ;;(print "res")
   ;(format t "~4,'0x" (get-mem idx))
   t)
 
@@ -92,10 +92,31 @@
 
 (defun set-reg (idx int)
   (setf (elt *reg* idx) int))
+;  (let ((low (ldb (byte 8 0) int))
+;	(high (ldb (byte 8 8) int)))
+;    (setf (elt *reg* idx) (+ (dpb low (byte 8 8) 0)
+;			     (dpb high (byte 8 0) 0)))))
 
 (defun reg-fun (idx)
-  (function (lambda (int b-w) (setf (elt *reg* idx) (trim-bw int b-w)))))
+  (function (lambda (int b-w) 
+    (set-reg idx (trim-bw int b-w)))))
 
+(defun get-reg (idx)
+  (elt *reg* idx))
+;  (let ((val (reg idx)))
+;    (let ((low (ldb (byte 8 0) val))
+;	  (high (ldb (byte 8 8) val)))
+;      (+ (dpb low (byte 8 8) 0)
+;	 (dpb high (byte 8 0) 0)))))
+
+(defun inc-reg (idx)
+  (incf (elt *reg* idx) 2))
+;  (set-reg idx (+ 2 (get-reg idx))))
+
+(defun dec-reg (idx)
+  (incf (elt *reg* idx) -2))
+;  (set-reg idx (+ -2 (get-reg idx))))
+  
 (defun dep-set (page val)
   (setf *dep-table* (dpb val (byte 1 page) *dep-table*)))
 
@@ -116,24 +137,26 @@
 (defun main ()
   (setf *reg* (make-array 16 :element-type '(unsigned-byte 16)))
   (set-reg 0 #x4400)
-  (loop ;repeat 10000
+  (loop ;repeat 1000000
      while (emu-step)
        do (if *unlocked*
 	      (return-from main "victory"))))
 
 (defun emu-step ()
-  (let* ((pc (reg 0))
+  (let* ((pc (get-reg 0))
 	 (bytes (subseq *mem* pc (+ pc 6))))
     ;(print bytes)
     ;(print "PC")
-    ;(format t "~4,'0x" pc)
+   ;(format t "~4,'0x" pc)
     ;(print "sp")
-    ;(format t "~4,'0x" (reg 1))
+   ;(format t "~4,'0x" (get-reg 1))
+    ;(print "sr")
+   ;(format t "~4,'0x" (get-reg 2))
     (cond ((oddp pc) (progn (setf *err* "PC unalligned")
 			    (return-from emu-step nil)))
-	  ((= (ldb (byte 1 4) (reg 2)) 1) (progn (setf *err* "cpu-off set")
+	  ((= (ldb (byte 1 4) (get-reg 2)) 1) (progn (setf *err* "cpu-off set")
 						 (return-from emu-step nil)))
-	  ((= pc 16) (int-handler (ldb (byte 7 8) (reg 2))))
+	  ((= pc 16) (int-handler (ldb (byte 7 8) (get-reg 2))))
 	  ((= (bytes-to-word (elt bytes 0) (elt bytes 1)) 0)
 	   (progn (setf *err* "zero instruction")
 			    (return-from emu-step nil)))
@@ -142,9 +165,9 @@
 							     
 (defun int-handler (type)
   ;(print "interrupt")
-  ;(print (subseq *mem* (reg 1) (+ 16 (reg 1))))
-  (let ((arg1 (get-mem (+ 8 (reg 1))))
-	(arg2 (get-mem (+ 10 (reg 1)))))
+  ;(print (subseq *mem* (get-reg 1) (+ 16 (get-reg 1))))
+  (let ((arg1 (get-mem (+ 8 (get-reg 1))))
+	(arg2 (get-mem (+ 10 (get-reg 1)))))
     (cond ((= type 0) (setf *console* (concatenate 'string *console* 
 						   (list (code-char (ldb (byte 8 0) arg1))))))
 	  ((= type 2) (getsn arg1 arg2))
@@ -153,8 +176,8 @@
 	  ((= type #x7d) (set-mem arg2 0 0)) ;assume password is always false
 	  ((= type #x7e) t) ;assume passsword is always false
 	  ((= type #x7f) (setf *unlocked* t)))
-    (set-reg 0 (get-mem (reg 1)))
-    (incf (elt *reg* 1) 2)))
+    (set-reg 0 (get-mem (get-reg 1)))
+    (inc-reg 1)))
 
 (defun getsn (start num)
   ;(print "getsn")
@@ -180,43 +203,52 @@
 	  ((= (ldb (byte 3 13) instn) 1) (jump-decode instn))
 	  ((>= (ldb (byte 4 12) instn) 4) (double-decode instn data1 data2)))))
 
-(defun address-decode (ad dest data)
- ;(print ad)
+(defun address-decode (ad dest data b-w)
+  ;(print ad)
   ;(print dest)
-  ;(format t "~4,'0x"  data)
+ ;(format t "~4,'0x"  data)
   ;decodes an address for a single operand instruction
   ;returns an integer representing the current value and a function that sets the new value
   (if (or (= dest 2) (= dest 3))
       (if (= dest 2)
-	  (cond ((= ad 0) (values (reg dest)
+	  (cond ((= ad 0) (values (get-reg dest)
 				  (reg-fun dest))) ;register mode
-		((= ad 1) (progn (incf (elt *reg* 0) 2)
+		((= ad 1) (progn (inc-reg 0)
 				 (values (get-mem data)
 					 (mem-fun data))));absolute mode
 		((= ad 2) (values 4 4)) ;represents a constant, can't set things
 		((= ad 3) (values 8 8)) ;as above
 		(t 'nil)) 
-	  (cond ((= ad 0) (values 0 0))
+	  (cond ((= ad 0) (values 0 0)) ;dest = 3
 		((= ad 1) (values 1 1))
 		((= ad 2) (values 2 2))
 		((= ad 3) (values 65535 65535))
 		(t 'nil)))
-      (cond ((= ad 0) (values (reg dest)
+      (cond ((= ad 0) (values (get-reg dest)
 			      (reg-fun dest))) ;register mode
-	    ((= ad 1) (let ((idx (mod+ (reg dest) data)))
-			(incf (elt *reg* 0) 2)
+	    ((= ad 1) (let ((idx (mod+ (get-reg dest) data)))
+			(inc-reg 0)
 			(values (get-mem idx)
 				(mem-fun idx)))) ;index mode
-	    ((= ad 2) (values (get-mem (reg dest))
-			      (mem-fun (reg dest)))) ;indirect mode
-	    ((= ad 3) (progn (incf (elt *reg* dest) 2)
-			     (values (get-mem (- (reg dest) 2))
-				     (mem-fun (- (reg dest) 2))))) ;indirect mode with increment
-	    (t 'nil)))) 
+	    ((= ad 2) (values (get-mem (get-reg dest))
+			      (mem-fun (get-reg dest)))) ;indirect mode
+	    ((= ad 3) (progn (addr-increment dest b-w)
+			     (values (get-mem (- (get-reg dest) (if (= dest 0)
+								    2
+								    (+ 1 (/ b-w 8)))))
+				     (mem-fun (- (get-reg dest) (if (= dest 0)
+								    2
+								    (+ 1 (/ b-w 8)))))))) ;indirect mode with increment
+	    (t 'nil))))
+
+(defun addr-increment (idx b-w)
+  (if (= 0 idx)
+      (incf (elt *reg* idx) 2)
+      (incf (elt *reg* idx) (+ 1 (/ b-w 8)))))
 
 (defun single-decode (instn data)
   ;(print "single-op")
-  (incf (elt *reg* 0) 2)
+  (inc-reg 0)
   ;decodes and calls a single operand instruction
   (let ((opcode (ldb (byte 3 7) instn))
 	(ad (ldb (byte 2 4) instn))
@@ -225,7 +257,7 @@
 		 0
 		 8)))
     (multiple-value-bind (value set-fun)
-	(address-decode ad dest data)
+	(address-decode ad dest data b-w)
       ;(print value)
       ;(print set-fun)
       (cond ((= opcode 0) (rrc value set-fun b-w))
@@ -279,19 +311,19 @@
 (defun psh (value set-fun b-w)
   ;(print "psh")
   ;(format t "~4,'0x" value)
-  (incf (elt *reg* 1) -2)
-  (set-mem (reg 1) value b-w))
+  (dec-reg 1)
+  (set-mem (get-reg 1) value b-w))
 
 (defun call (value set-fun)
   ;(print "call")
   ;(format t "~4,'0x" value)
-  (psh (+ (reg 0) 0) nil 8)
-  (setf (elt *reg* 0) value))
+  (psh (get-reg 0) nil 8)
+  (set-reg 0 value))
 
 (defun jump-decode (instn)
   ;(print "jump")
   ;(format t "~4,'0x" instn)
-  ;(print (reg 2))
+  ;(print (get-reg 2))
   (let ((type (ldb (byte 3 10) instn))
 	(offset (ldb (byte 10 0) instn))
 	(z (flag 1))
@@ -300,21 +332,21 @@
 	(v (flag 8)))
     (cond ((= type 0) (if (= z 0) 
 			  (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 1) (if (= z 1) 
 			  (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 2) (if (= c 0) 
 			  (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 3) (if (= c 1) (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 4) (if (= n 1) (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 5) (if (= n v) (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 6) (if (/= n v) (jmp offset)
-			  (incf (elt *reg* 0) 2)))
+			  (inc-reg 0)))
 	  ((= type 7) (jmp offset)))))
 
 (defun jmp (offset)
@@ -323,14 +355,14 @@
   ;(print (* (ldb (byte 1 9) offset) 1024))
   ;(print (- (* 2 (- (ldb (byte 9 0) offset)
 ;		    (* (ldb (byte 1 9) offset) 512)))))
-  (setf (elt *reg* 0) (+ (reg 0) 2
-			 (* 2 (- (ldb (byte 9 0) offset)
-				 (* (ldb (byte 1 9) offset) 512)))))
+  (set-reg 0 (+ (get-reg 0) 2
+		(* 2 (- (ldb (byte 9 0) offset)
+			(* (ldb (byte 1 9) offset) 512)))))
   t)
 
 (defun double-decode (instn data1 data2)
   ;(print "double-op")
-  (incf (elt *reg* 0) 2)
+  (inc-reg 0)
   (let ((opcode (ldb (byte 4 12) instn))
 	(source (ldb (byte 4 8) instn))
 	(ad (ldb (byte 1 7) instn))
@@ -340,11 +372,12 @@
 		 0
 		 8)))
     (multiple-value-bind (source-val source-fun)
-	(address-decode as source data1)
+	(address-decode as source data1 b-w)
       (multiple-value-bind (dest-val dest-fun)
 	  (address-decode ad dest (if (= (ldb (byte 1 0) as) 1)
 				      data2    ;use the second extension word if
-				      data1))  ;the first was used in the source
+				      data1)
+			  b-w)  ;the first was used in the source
 ;      (let* ((source-lst (multiple-value-list (address-decode as source data1)))
 ;	     (source-val (car source-lst)))
 ;	;(print source-lst)
@@ -368,9 +401,9 @@
 
 (defun mov (val dest-fun b-w)
   ;(print "mov")
-  ;(format t "~4,'0x"  val)
-;  ;(print dest-fun)
-;  ;(print b-w)
+ ;(format t "~4,'0x"  val)
+;  (print dest-fun)
+  ;(print b-w)
   (funcall dest-fun val b-w))
 
 (defun add-flags (res b-w)
@@ -381,27 +414,32 @@
 
 (defun add (source-val dest-val dest-fun b-w)
   ;(print "add")
+  ;(print "source")
+ ;(format t "~4,'0x" source-val)
+  ;(print "dest")
+ ;(format t "~4,'0x" dest-val)
+  ;(print b-w)
   (let ((res (+ (trim-bw source-val b-w) (trim-bw dest-val b-w))))
-    (funcall dest-fun res b-w)
-    (add-flags res b-w)))
+    (add-flags res b-w)
+    (funcall dest-fun res b-w)))
 
 (defun addc (source-val dest-val dest-fun b-w)
   ;(print "addc")
   (let ((res (+ (trim-bw source-val b-w) (trim-bw dest-val b-w) (get-c))))
-    (funcall dest-fun res b-w)
-    (add-flags res b-w)))
+    (add-flags res b-w)
+    (funcall dest-fun res b-w)))
 
 (defun subc (source-val dest-val dest-fun b-w)
   ;(print "subc")
   (let ((res (+ (trim-bw dest-val b-w) (lognot (trim-bw source-val b-w)) (get-c) 1))) ;random +1 for bug compat
-    (funcall dest-fun res b-w)
-    (add-flags res b-w)))
+    (add-flags res b-w)
+    (funcall dest-fun res b-w)))
 
 (defun sub (source-val dest-val dest-fun b-w)
   ;(print "sub")
   (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
-    (funcall dest-fun res b-w)
-    (add-flags res b-w)))
+    (add-flags res b-w)
+    (funcall dest-fun res b-w)))
 
 (defun cmp (source-val dest-val b-w)
   ;(print "cmp")
@@ -410,7 +448,7 @@
   ;(print b-w)
   (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
     (add-flags res b-w)))
-  ;(print (reg 2)))
+  ;(print (get-reg 2)))
 
 (eval-when (:execute)
   (let ((source-val 0)
