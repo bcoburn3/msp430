@@ -4,9 +4,44 @@
 ;memory to be represented as a large array of bytes
 ;registers as a much smaller array of words
 
+;some utilities, that would be in a library normally
+
 (ql:quickload "cl-utilities")
 
 (use-package :cl-utilities) ;purely for split-sequence
+
+(defun hex-char-to-int (chr)
+  (let ((hex-index "0123456789abcdef")
+        (int-index #(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)))
+    (elt int-index (position chr hex-index))))
+
+(defun hex-string-to-int (str)
+  (if (equal str "")
+      0
+      (let ((down-str (string-downcase str)))
+	(loop for i from 0 to (- (length str) 1)
+	   for res = (hex-char-to-int (elt down-str i)) then (+ (* res 16) (hex-char-to-int (elt down-str i)))
+	   finally (return res)))))
+
+(defun 4bits-to-hex-char (bits)
+  (let ((hex-index "0123456789abcdef")
+        (int-index #(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)))
+    (elt hex-index (position bits int-index))))
+
+(defun list-to-string (l)
+  (with-output-to-string (s)
+    (dolist (c l)
+      (princ c s))))
+
+(defun int-to-hex-string (int)
+  (list-to-string
+   (loop for i = int then (/ (- i (mod i 16)) 16)
+       while (>= i 1)
+       with res = '()
+       do (push (4bits-to-hex-char (mod i 16)) res)
+       finally (return res))))
+
+;global variables
 
 (defvar *reg* (make-array 16 :element-type '(UNSIGNED-BYTE 16)))
 
@@ -24,6 +59,19 @@
 
 (defvar *unlocked* nil)
 
+(defmacro log-line (&body body)
+  (let ((type "fl"))
+    (if (equalp type "pr") `(if (integerp ,(car body)) 
+				  (print (int-to-hex-string ,(car body)))
+				  (print ,(car body))))
+    (if (equalp type "fl") (progn
+			     (let ((file (open "C:\\ben\\log.txt" :direction :output :if-exists :supersede)))
+			       `(if (integerp ,(car body)) 
+				    (write-line (int-to-hex-string ,(car body)) file)
+				    (write-line ,(car body) file)))))
+    (if (equalp type "nil") '1)))
+
+;some utility functions specific to the emulator
 (defun mem (idx)
   (elt *mem* idx))
 
@@ -67,24 +115,24 @@
   (mod (reduce #'* args) 65536))
 
 (defun get-mem (idx)
-  ;;(print "get-mem")
-  ;(format t "~4,'0x" idx)
-  ;(print (bytes-to-word (mem idx) (mem (+ idx 1))))
+  (log-line "get-mem")
+  (log-line idx)
+  (log-line (bytes-to-word (mem idx) (mem (+ idx 1))))
   (bytes-to-word (mem idx) (mem (+ idx 1))))
 
 (defun set-mem (idx int b-w)
-  ;(print "set-mem")
- ;(format t "~4,'0x" (get-mem idx))
-  ;(print "idx")
- ;(format t "~4,'0x" idx)
+  (log-line "set-mem")
+ (log-line (get-mem idx))
+  (log-line "idx")
+ (log-line idx)
   (let* ((low (mod int 256))
 	 (high (/ (- int low) 256)))
     (if (= b-w 0)
 	(setf (elt *mem* idx) low)
 	(setf (elt *mem* idx) low
 	      (elt *mem* (+ idx 1)) high)))
-  ;;(print "res")
-  ;(format t "~4,'0x" (get-mem idx))
+  (log-line "res")
+  (log-line (get-mem idx))
   t)
 
 (defun mem-fun (idx)
@@ -134,10 +182,11 @@
 (defun trim-bw (val b-w)
   (ldb (byte (+ b-w 8) 0) val))
 
+;start of actual emulator
 (defun main ()
   (setf *reg* (make-array 16 :element-type '(unsigned-byte 16)))
   (set-reg 0 #x4400)
-  (loop ;repeat 1000000
+  (loop repeat 1000000
      while (emu-step)
        do (if *unlocked*
 	      (return-from main "victory"))))
@@ -145,13 +194,13 @@
 (defun emu-step ()
   (let* ((pc (get-reg 0))
 	 (bytes (subseq *mem* pc (+ pc 6))))
-    ;(print bytes)
-    ;(print "PC")
-   ;(format t "~4,'0x" pc)
-    ;(print "sp")
-   ;(format t "~4,'0x" (get-reg 1))
-    ;(print "sr")
-   ;(format t "~4,'0x" (get-reg 2))
+    (log-line bytes)
+    (log-line "PC")
+   (log-line pc)
+    (log-line "sp")
+   (log-line (get-reg 1))
+    (log-line "sr")
+   (log-line (get-reg 2))
     (cond ((oddp pc) (progn (setf *err* "PC unalligned")
 			    (return-from emu-step nil)))
 	  ((= (ldb (byte 1 4) (get-reg 2)) 1) (progn (setf *err* "cpu-off set")
@@ -164,8 +213,8 @@
     ))
 							     
 (defun int-handler (type)
-  ;(print "interrupt")
-  ;(print (subseq *mem* (get-reg 1) (+ 16 (get-reg 1))))
+  (log-line "interrupt")
+  (log-line (subseq *mem* (get-reg 1) (+ 16 (get-reg 1))))
   (let ((arg1 (get-mem (+ 8 (get-reg 1))))
 	(arg2 (get-mem (+ 10 (get-reg 1)))))
     (cond ((= type 0) (setf *console* (concatenate 'string *console* 
@@ -180,10 +229,10 @@
     (inc-reg 1)))
 
 (defun getsn (start num)
-  ;(print "getsn")
-  ;(format t "~4,'0x" start)
-  ;(print num)
-  ;(print (car *input*))
+  (log-line "getsn")
+  (log-line start)
+  (log-line num)
+  (log-line (car *input*))
   (let ((cur-input (car *input*)))
     (loop for i from 0 to (- (/ (length cur-input) 2) 1)
        while (<= i num)
@@ -204,9 +253,9 @@
 	  ((>= (ldb (byte 4 12) instn) 4) (double-decode instn data1 data2)))))
 
 (defun address-decode (ad dest data b-w)
-  ;(print ad)
-  ;(print dest)
- ;(format t "~4,'0x"  data)
+  (log-line ad)
+  (log-line dest)
+ (log-line  data)
   ;decodes an address for a single operand instruction
   ;returns an integer representing the current value and a function that sets the new value
   (if (or (= dest 2) (= dest 3))
@@ -247,7 +296,7 @@
       (incf (elt *reg* idx) (+ 1 (/ b-w 8)))))
 
 (defun single-decode (instn data)
-  ;(print "single-op")
+  (log-line "single-op")
   (inc-reg 0)
   ;decodes and calls a single operand instruction
   (let ((opcode (ldb (byte 3 7) instn))
@@ -258,8 +307,8 @@
 		 8)))
     (multiple-value-bind (value set-fun)
 	(address-decode ad dest data b-w)
-      ;(print value)
-      ;(print set-fun)
+      ;(log-line value)
+      ;(log-line set-fun)
       (cond ((= opcode 0) (rrc value set-fun b-w))
 	    ((= opcode 1) (swpb value set-fun))
 	    ((= opcode 2) (rra value set-fun b-w))
@@ -270,7 +319,7 @@
 	      ;RETI isn't implemented because it's not in the CTF
 
 (defun rrc (value set-fun b-w)
-  ;(print "rrc")
+  (log-line "rrc")
   (let ((carry (ldb (byte 1 0) value))
 	(tmp (ash (trim-bw value b-w) -1)))
     (let ((res (dpb (get-c) (byte 1 (+ b-w 7)) tmp)))
@@ -283,13 +332,13 @@
 	  (set-z 0)))))
 
 (defun swpb (value set-fun)
-  ;(print "swpb")
+  (log-line "swpb")
   (let ((low (ldb (byte 8 8) value))
 	(high (ldb (byte 8 0) value)))
     (funcall set-fun (+ (* 256 high) low) 8)))
 
 (defun rra (value set-fun b-w)
-  ;(print "rra")
+  (log-line "rra")
   (let ((res (ash (trim-bw value b-w) -1)))
     (funcall set-fun res b-w)
     (if (= (negp res b-w) 1)
@@ -298,7 +347,7 @@
     (set-z 0)))
 
 (defun sxt (value set-fun)
-;(print "sxt")
+  (log-line "sxt")
   (let ((res (dpb (* 255 (ldb (byte 1 7) value)) (byte 8 8) value)))
     (funcall set-fun res 8)
     (set-c (if (= res 0)
@@ -309,21 +358,21 @@
     (set-z (nullp res 8))))
 
 (defun psh (value set-fun b-w)
-  ;(print "psh")
-  ;(format t "~4,'0x" value)
+  (log-line "psh")
+  (log-line value)
   (dec-reg 1)
   (set-mem (get-reg 1) value b-w))
 
 (defun call (value set-fun)
-  ;(print "call")
-  ;(format t "~4,'0x" value)
+  (log-line "call")
+  (log-line value)
   (psh (get-reg 0) nil 8)
   (set-reg 0 value))
 
 (defun jump-decode (instn)
-  ;(print "jump")
-  ;(format t "~4,'0x" instn)
-  ;(print (get-reg 2))
+  (log-line "jump")
+  (log-line instn)
+  (log-line (get-reg 2))
   (let ((type (ldb (byte 3 10) instn))
 	(offset (ldb (byte 10 0) instn))
 	(z (flag 1))
@@ -350,18 +399,18 @@
 	  ((= type 7) (jmp offset)))))
 
 (defun jmp (offset)
-  ;(print offset)
-  ;(print (ldb (byte 9 0) offset))
-  ;(print (* (ldb (byte 1 9) offset) 1024))
-  ;(print (- (* 2 (- (ldb (byte 9 0) offset)
-;		    (* (ldb (byte 1 9) offset) 512)))))
+  (log-line offset)
+  (log-line (ldb (byte 9 0) offset))
+  (log-line (* (ldb (byte 1 9) offset) 1024))
+  (log-line (- (* 2 (- (ldb (byte 9 0) offset)
+		       (* (ldb (byte 1 9) offset) 512)))))
   (set-reg 0 (+ (get-reg 0) 2
 		(* 2 (- (ldb (byte 9 0) offset)
 			(* (ldb (byte 1 9) offset) 512)))))
   t)
 
 (defun double-decode (instn data1 data2)
-  ;(print "double-op")
+  (log-line "double-op")
   (inc-reg 0)
   (let ((opcode (ldb (byte 4 12) instn))
 	(source (ldb (byte 4 8) instn))
@@ -380,11 +429,11 @@
 			  b-w)  ;the first was used in the source
 ;      (let* ((source-lst (multiple-value-list (address-decode as source data1)))
 ;	     (source-val (car source-lst)))
-;	;(print source-lst)
-	;(print "source")
-	;(format t "~4,'0x" source-val)
-	;(print "dest")
-	;(format t "~4,'0x" dest-val)
+	;(log-line source-lst)
+	(log-line "source")
+	(log-line source-val)
+	(log-line "dest")
+	(log-line dest-val)
 	(cond ((= opcode 4) (mov source-val dest-fun b-w))
 	      ((= opcode 5) (add source-val dest-val dest-fun b-w))
 	      ((= opcode 6) (addc source-val dest-val dest-fun b-w))
@@ -400,10 +449,10 @@
 	      (t 'nil))))))
 
 (defun mov (val dest-fun b-w)
-  ;(print "mov")
- ;(format t "~4,'0x"  val)
-;  (print dest-fun)
-  ;(print b-w)
+  (log-line "mov")
+ (log-line  val)
+  (log-line dest-fun)
+  (log-line b-w)
   (funcall dest-fun val b-w))
 
 (defun add-flags (res b-w)
@@ -413,52 +462,45 @@
   (set-z (nullp res b-w)))
 
 (defun add (source-val dest-val dest-fun b-w)
-  ;(print "add")
-  ;(print "source")
- ;(format t "~4,'0x" source-val)
-  ;(print "dest")
- ;(format t "~4,'0x" dest-val)
-  ;(print b-w)
+  (log-line "add")
+  (log-line "source")
+  (log-line source-val)
+  (log-line "dest")
+  (log-line dest-val)
+  (log-line b-w)
   (let ((res (+ (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (add-flags res b-w)
     (funcall dest-fun res b-w)))
 
 (defun addc (source-val dest-val dest-fun b-w)
-  ;(print "addc")
+  (log-line "addc")
   (let ((res (+ (trim-bw source-val b-w) (trim-bw dest-val b-w) (get-c))))
     (add-flags res b-w)
     (funcall dest-fun res b-w)))
 
 (defun subc (source-val dest-val dest-fun b-w)
-  ;(print "subc")
+  (log-line "subc")
   (let ((res (+ (trim-bw dest-val b-w) (lognot (trim-bw source-val b-w)) (get-c) 1))) ;random +1 for bug compat
     (add-flags res b-w)
     (funcall dest-fun res b-w)))
 
 (defun sub (source-val dest-val dest-fun b-w)
-  ;(print "sub")
+  (log-line "sub")
   (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
     (add-flags res b-w)
     (funcall dest-fun res b-w)))
 
 (defun cmp (source-val dest-val b-w)
-  ;(print "cmp")
-  ;(format t "~4,'0x"  source-val)
-  ;(format t "~4,'0x"  dest-val)
-  ;(print b-w)
+  (log-line "cmp")
+  (format t "~4,'0x"  source-val)
+  (format t "~4,'0x"  dest-val)
+  (log-line b-w)
   (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
-    (add-flags res b-w)))
-  ;(print (get-reg 2)))
-
-(eval-when (:execute)
-  (let ((source-val 0)
-	(dest-val 0)
-	(b-w 8))
-    (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1))))))
-      ;(print res))))
+    (add-flags res b-w))
+  (log-line (get-reg 2)))
 
 (defun dadd (source-val dest-val dest-fun b-w)
-  ;(print "dadd")
+  (log-line "dadd")
   (let ((trim-s (trim-bw source-val b-w))
 	(trim-d (trim-bw dest-val b-w)))
     (let ((res (loop for i in (list 0 4 8 12)
@@ -479,7 +521,7 @@
       (funcall dest-fun res b-w))))
 
 (defun emu-bit (source-val dest-val b-w)
-  ;(print "emu-bit")
+  (log-line "emu-bit")
   (let ((res (logand (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (set-v 0)
     (set-n (ldb (byte 1 (+ b-w 7)) res))
@@ -487,16 +529,16 @@
     (set-c (nullp res b-w))))
 
 (defun bic (source-val dest-val dest-fun b-w)
-  ;(print "bic")
+  (log-line "bic")
   (let ((res (logand (lognot (trim-bw source-val b-w)) (trim-bw dest-val b-w))))
     (funcall dest-fun res b-w)))
 
 (defun bis (source-val dest-val dest-fun b-w)
-  ;(print "bis")
+  (log-line "bis")
   (funcall dest-fun (logior (trim-bw source-val b-w) (trim-bw dest-val b-w)) b-w))
 
 (defun xor (source-val dest-val dest-fun b-w)
-  ;(print "xor")
+  (log-line "xor")
   (let ((res (logxor (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (funcall dest-fun res b-w)
     (set-v 0)
@@ -505,7 +547,7 @@
     (set-c (nullp res b-w))))
 
 (defun emu-and (source-val dest-val dest-fun b-w)
-  ;(print "emu-and")
+  (log-line "emu-and")
   (let ((res (logand (trim-bw source-val b-w) (trim-bw dest-val b-w))))
     (funcall dest-fun res b-w)
     (set-v 0)
@@ -514,18 +556,6 @@
     (set-c (nullp res b-w))))
 
 ;start of file importing code
-(defun hex-char-to-int (chr)
-  (let ((hex-index "0123456789abcdef")
-        (int-index #(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)))
-    (elt int-index (position chr hex-index))))
-
-(defun hex-string-to-int (str)
-  (if (equal str "")
-      0
-      (let ((down-str (string-downcase str)))
-	(loop for i from 0 to (- (length str) 1)
-	   for res = (hex-char-to-int (elt down-str i)) then (+ (* res 16) (hex-char-to-int (elt down-str i)))
-	   finally (return res)))))
 
 (defun import-file (file)
   (setf *mem* (make-array 65536 :element-type '(unsigned-byte 8)))
