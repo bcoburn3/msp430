@@ -43,6 +43,8 @@
 
 ;global variables
 
+(defvar *log-stream* *standard-output*)
+
 (defvar *reg* (make-array 16 :element-type '(UNSIGNED-BYTE 16)))
 
 (defvar *mem* (make-array 65536 :element-type '(UNSIGNED-BYTE 8)))
@@ -59,17 +61,12 @@
 
 (defvar *unlocked* nil)
 
-(defmacro log-line (&body body)
-  (let ((type "fl"))
-    (if (equalp type "pr") `(if (integerp ,(car body)) 
-				  (print (int-to-hex-string ,(car body)))
-				  (print ,(car body))))
-    (if (equalp type "fl") (progn
-			     (let ((file (open "C:\\ben\\log.txt" :direction :output :if-exists :supersede)))
-			       `(if (integerp ,(car body)) 
-				    (write-line (int-to-hex-string ,(car body)) file)
-				    (write-line ,(car body) file)))))
-    (if (equalp type "nil") '1)))
+(defun log-line (arg)
+  (if (integerp arg)
+      (print (format nil "~4,'0x" arg) *log-stream*)
+      (print arg *log-stream*))
+  t)
+
 
 ;some utility functions specific to the emulator
 (defun mem (idx)
@@ -115,9 +112,9 @@
   (mod (reduce #'* args) 65536))
 
 (defun get-mem (idx)
-  (log-line "get-mem")
-  (log-line idx)
-  (log-line (bytes-to-word (mem idx) (mem (+ idx 1))))
+;  (log-line "get-mem")
+ ; (log-line idx)
+  ;(log-line (bytes-to-word (mem idx) (mem (+ idx 1))))
   (bytes-to-word (mem idx) (mem (+ idx 1))))
 
 (defun set-mem (idx int b-w)
@@ -196,11 +193,13 @@
 	 (bytes (subseq *mem* pc (+ pc 6))))
     (log-line bytes)
     (log-line "PC")
-   (log-line pc)
+    (log-line pc)
     (log-line "sp")
-   (log-line (get-reg 1))
+    (log-line (get-reg 1))
     (log-line "sr")
-   (log-line (get-reg 2))
+    (log-line (get-reg 2))
+    (log-line "registers")
+    (log-line *reg*)
     (cond ((oddp pc) (progn (setf *err* "PC unalligned")
 			    (return-from emu-step nil)))
 	  ((= (ldb (byte 1 4) (get-reg 2)) 1) (progn (setf *err* "cpu-off set")
@@ -255,39 +254,45 @@
 (defun address-decode (ad dest data b-w)
   (log-line ad)
   (log-line dest)
- (log-line  data)
+  (log-line data)
   ;decodes an address for a single operand instruction
   ;returns an integer representing the current value and a function that sets the new value
   (if (or (= dest 2) (= dest 3))
       (if (= dest 2)
 	  (cond ((= ad 0) (values (get-reg dest)
-				  (reg-fun dest))) ;register mode
+				  (reg-fun dest)
+				  0)) ;register mode
 		((= ad 1) (progn (inc-reg 0)
 				 (values (get-mem data)
-					 (mem-fun data))));absolute mode
-		((= ad 2) (values 4 4)) ;represents a constant, can't set things
-		((= ad 3) (values 8 8)) ;as above
+					 (mem-fun data)
+					 1)));absolute mode
+		((= ad 2) (values 4 (reg-fun dest) 0)) ;represents a constant, can't set things
+		((= ad 3) (values 8 (reg-fun dest) 0)) ;as above
 		(t 'nil)) 
-	  (cond ((= ad 0) (values 0 0)) ;dest = 3
-		((= ad 1) (values 1 1))
-		((= ad 2) (values 2 2))
-		((= ad 3) (values 65535 65535))
+	  (cond ((= ad 0) (values 0 (reg-fun dest) 0)) ;dest = 3
+		((= ad 1) (values 1 (reg-fun dest) 0))
+		((= ad 2) (values 2 (reg-fun dest) 0))
+		((= ad 3) (values 65535 (reg-fun dest) 0))
 		(t 'nil)))
       (cond ((= ad 0) (values (get-reg dest)
-			      (reg-fun dest))) ;register mode
+			      (reg-fun dest)
+			      0)) ;register mode
 	    ((= ad 1) (let ((idx (mod+ (get-reg dest) data)))
 			(inc-reg 0)
 			(values (get-mem idx)
-				(mem-fun idx)))) ;index mode
+				(mem-fun idx)
+				1))) ;index mode
 	    ((= ad 2) (values (get-mem (get-reg dest))
-			      (mem-fun (get-reg dest)))) ;indirect mode
+			      (mem-fun (get-reg dest))
+			      0)) ;indirect mode
 	    ((= ad 3) (progn (addr-increment dest b-w)
 			     (values (get-mem (- (get-reg dest) (if (= dest 0)
 								    2
 								    (+ 1 (/ b-w 8)))))
 				     (mem-fun (- (get-reg dest) (if (= dest 0)
 								    2
-								    (+ 1 (/ b-w 8)))))))) ;indirect mode with increment
+								    (+ 1 (/ b-w 8)))))
+				     0))) ;indirect mode with increment
 	    (t 'nil))))
 
 (defun addr-increment (idx b-w)
@@ -420,10 +425,10 @@
 	(b-w (if (= 1 (ldb (byte 1 6) instn))
 		 0
 		 8)))
-    (multiple-value-bind (source-val source-fun)
+    (multiple-value-bind (source-val source-fun data-offset)
 	(address-decode as source data1 b-w)
-      (multiple-value-bind (dest-val dest-fun)
-	  (address-decode ad dest (if (= (ldb (byte 1 0) as) 1)
+      (multiple-value-bind (dest-val dest-fun junk-val)
+	  (address-decode ad dest (if (= data-offset 1)
 				      data2    ;use the second extension word if
 				      data1)
 			  b-w)  ;the first was used in the source
@@ -492,8 +497,8 @@
 
 (defun cmp (source-val dest-val b-w)
   (log-line "cmp")
-  (format t "~4,'0x"  source-val)
-  (format t "~4,'0x"  dest-val)
+  (log-line  source-val)
+  (log-line  dest-val)
   (log-line b-w)
   (let ((res (+ (trim-bw dest-val b-w) (trim-bw (lognot source-val) b-w) 1)))
     (add-flags res b-w))
@@ -583,6 +588,8 @@
 
 (defun run-level (file-name input)
   (reset)
+  (setf *log-stream* (open "C:\\ben\\log.txt" :direction :output :if-exists :supersede :sharing :external))
+  ;(setf *log-stream* *standard-output*)
   (print "start of run")
   (import-file file-name)
   (setf *input* input)
