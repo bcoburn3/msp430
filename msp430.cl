@@ -8,6 +8,8 @@
 
 (use-package :cl-utilities) ;purely for split-sequence
 
+(defvar *random-state*)
+
 (defvar *log-stream* *standard-output*)
 
 (defun log-text (&rest args)
@@ -49,25 +51,33 @@
   (ldb (byte 1 0) (reg 2)))
 
 (defun set-c (int)
+  (clear-sr-high)
   (setf (elt *reg* 2) (dpb int (byte 1 0) (reg 2))))
 
 (defun get-z ()
   (ldb (byte 1 1) (reg 2)))
 
 (defun set-z (int)
+  (clear-sr-high)
   (setf (elt *reg* 2) (dpb int (byte 1 1) (reg 2))))
 
 (defun get-n ()
   (ldb (byte 1 2) (reg 2)))
 
 (defun set-n (int)
+  (clear-sr-high)
   (setf (elt *reg* 2) (dpb int (byte 1 2) (reg 2))))
 
 (defun get-v ()
   (ldb (byte 1 8) (reg 2)))
 
 (defun set-v (int)
+  (clear-sr-high)
   (setf (elt *reg* 2) (dpb int (byte 1 8) (reg 2))))
+
+(defun clear-sr-high ()
+  ;clears the high byte of the status register
+  (setf (elt *reg* 2) (dpb 0 (byte 8 8) (reg 2))))
 
 (defun bytes-to-word (low high)
   (+ (* 256 high) low))
@@ -108,6 +118,7 @@
 ;			     (dpb high (byte 8 0) 0)))))
 
 (defun reg-fun (idx)
+  (log-text "reg-fun" idx)
   (function (lambda (int b-w) 
     (set-reg idx (trim-bw int b-w)))))
 
@@ -144,17 +155,23 @@
 (defun trim-bw (val b-w)
   (ldb (byte (+ b-w 8) 0) val))
 
+(defvar *counter*)
+
 (defun main ()
   (setf *reg* (make-array 16 :element-type '(unsigned-byte 16)))
   (set-reg 0 #x4400)
-  (loop repeat 1000000
+  ;(setf *counter* 0)
+  (loop for i from 0 to 4000000
      while (emu-step)
-       do (if *unlocked*
+       do (print i *log-stream*) 
+       (if *unlocked*
 	      (return-from main "victory"))))
 
 (defun emu-step ()
   (let* ((pc (get-reg 0))
 	 (bytes (subseq *mem* pc (+ pc 6))))
+    ;(incf *counter*)
+    ;(print *counter* *log-stream*)
     (print (map 'list #'(lambda (x) (format nil "~2,'0x" x)) bytes) *log-stream*)
     (print (map 'list #'(lambda (x) (format nil "~4,'0x" x)) *reg*) *log-stream*)
     (log-text "PC" pc)
@@ -168,18 +185,22 @@
 	  ((= (bytes-to-word (elt bytes 0) (elt bytes 1)) 0)
 	   (progn (setf *err* "zero instruction")
 			    (return-from emu-step nil)))
-	  (t (instruction-decode bytes)))))
+	  (t (instruction-decode bytes)))
+    t))
 
 (defun int-handler (type)
   ;(print "interrupt")
   ;(print (subseq *mem* (get-reg 1) (+ 16 (get-reg 1))))
   (let ((arg1 (get-mem (+ 8 (get-reg 1))))
 	(arg2 (get-mem (+ 10 (get-reg 1)))))
+    (log-text "int" type)
     (cond ((= type 0) (setf *console* (concatenate 'string *console* 
 						   (list (code-char (ldb (byte 8 0) arg1))))))
 	  ((= type 2) (getsn arg1 arg2))
-	  ((= type 3) (dep-set arg1 arg2))
-	  ((= type 4) (set-reg 15 (random 65536 (make-random-state t))))
+	  ((= type #x10) (dep-set arg1 arg2))
+	  ((= type #x20) (let ((rand-val (random 65536 *random-state*)))
+			   (log-text "rng" rand-val)
+			   (set-reg 15 rand-val)))
 	  ((= type #x7d) (set-mem arg2 0 0)) ;assume password is always false
 	  ((= type #x7e) t) ;assume passsword is always false
 	  ((= type #x7f) (setf *unlocked* t)))
@@ -254,7 +275,7 @@
 				     (mem-fun (- (get-reg dest) (if (= dest 0)
 								    2
 								    (+ 1 (/ b-w 8)))))
-				     t))) ;indirect mode with increment
+				     (= dest 0)))) ;indirect mode with increment
 	    (t 'nil))))
 
 (defun addr-increment (idx b-w)
@@ -306,12 +327,18 @@
 
 (defun rra (value set-fun b-w)
   (log-text "rra")
-  (let ((res (ash (trim-bw value b-w) -1)))
+  (let* ((tmp (ash (trim-bw value b-w) -1))
+	 (msb (ldb (byte 1 (+ 7 b-w)) value))
+	 (res (dpb msb (byte 1 (+ 7 b-w)) tmp)))
     (funcall set-fun res b-w)
     (if (= (negp res b-w) 1)
 	(set-n 1))
     (set-v 0)
     (set-z 0)))
+
+(let* ((tmp (ash (trim-bw #x93f6 8) -1))
+	 (res (dpb 1 (byte 1 (+ 7 8)) tmp)))
+  (print (format nil "~4,'0x" res)))
 
 (defun sxt (value set-fun)
 (log-text "sxt")
@@ -480,8 +507,10 @@
 				 (- tmp 10)
 				 tmp)
 		  for val = tmp2 then (dpb tmp2 (byte 4 i) val)
-		  finally (progn (set-c c)
-				 (if (ldb (byte 1 3) tmp)
+		  finally (progn (set-c (if (>= tmp 10)
+					    1
+					    0))
+				 (if (= (ldb (byte 1 3) tmp) 1)
 				     (set-n 1))
 				 (return val)))))
       (funcall dest-fun res b-w))))
@@ -563,7 +592,8 @@
   (reset)
   (print "start of run")
   ;(setf *log-stream* *standard-output*)
-  (setf *log-stream* (open "C:\\ben\\log.txt" :direction :output :if-exists :supersede :SHARING :external))
+  (setf *log-stream* (open "C:\\ben\\log.txt" :direction :output :if-exists :supersede :SHARING :lock))
+  (setf *random-state* (make-random-state t))
   (import-file file-name)
   (setf *input* input)
   (main)
