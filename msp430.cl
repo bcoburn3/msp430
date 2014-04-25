@@ -1,12 +1,10 @@
 ;emulator for the MSP430, written to help solve the final level in the Matasano/Square CTF at https://microcorruption.com/
 
-;data structure plans:
-;memory to be represented as a large array of bytes
-;registers as a much smaller array of words
-
 (ql:quickload "cl-utilities")
 
 (use-package :cl-utilities) ;purely for split-sequence
+
+;some utility functions
 
 (defvar *random-state*)
 
@@ -79,6 +77,7 @@
   ;clears the high byte of the status register
   (setf (elt *reg* 2) (dpb 0 (byte 8 8) (reg 2))))
 
+;convert from little endian
 (defun bytes-to-word (low high)
   (+ (* 256 high) low))
 
@@ -89,9 +88,6 @@
   (mod (reduce #'* args) 65536))
 
 (defun get-mem (idx)
-  ;;(print "get-mem")
-  ;(format t "~4,'0x" idx)
-  ;(print (bytes-to-word (mem idx) (mem (+ idx 1))))
   (bytes-to-word (mem idx) (mem (+ idx 1))))
 
 (defun set-mem (idx int b-w)
@@ -112,10 +108,6 @@
 
 (defun set-reg (idx int)
   (setf (elt *reg* idx) int))
-;  (let ((low (ldb (byte 8 0) int))
-;	(high (ldb (byte 8 8) int)))
-;    (setf (elt *reg* idx) (+ (dpb low (byte 8 8) 0)
-;			     (dpb high (byte 8 0) 0)))))
 
 (defun reg-fun (idx)
   (log-text "reg-fun" idx)
@@ -124,11 +116,6 @@
 
 (defun get-reg (idx)
   (elt *reg* idx))
-;  (let ((val (reg idx)))
-;    (let ((low (ldb (byte 8 0) val))
-;	  (high (ldb (byte 8 8) val)))
-;      (+ (dpb low (byte 8 8) 0)
-;	 (dpb high (byte 8 0) 0)))))
 
 (defun inc-reg (idx)
   (incf (elt *reg* idx) 2))
@@ -161,7 +148,7 @@
   (setf *reg* (make-array 16 :element-type '(unsigned-byte 16)))
   (set-reg 0 #x4400)
   ;(setf *counter* 0)
-  (loop for i from 0 to 4000000
+  (loop for i from 0 to 20000000
      while (emu-step)
        do (print i *log-stream*) 
        (if *unlocked*
@@ -172,11 +159,11 @@
 	 (bytes (subseq *mem* pc (+ pc 6))))
     ;(incf *counter*)
     ;(print *counter* *log-stream*)
-    (print (map 'list #'(lambda (x) (format nil "~2,'0x" x)) bytes) *log-stream*)
+    ;(print (map 'list #'(lambda (x) (format nil "~2,'0x" x)) bytes) *log-stream*)
     (print (map 'list #'(lambda (x) (format nil "~4,'0x" x)) *reg*) *log-stream*)
-    (log-text "PC" pc)
-    (log-text "SP" (get-reg 1))
-    (log-text "SR" (get-reg 2))
+    ;(log-text "PC" pc)
+    ;(log-text "SP" (get-reg 1))
+    ;(log-text "SR" (get-reg 2))
     (cond ((oddp pc) (progn (setf *err* "PC unalligned")
 			    (return-from emu-step nil)))
 	  ((= (ldb (byte 1 4) (get-reg 2)) 1) (progn (setf *err* "cpu-off set")
@@ -232,9 +219,9 @@
 	  ((>= (ldb (byte 4 12) instn) 4) (double-decode instn data1 data2)))))
 
 (defun address-decode (ad dest data b-w)
-  (log-text "AD" ad)
-  (log-text "dest" dest)
-  (log-text "ext-word" data)
+  ;(log-text "AD" ad)
+  ;(log-text "dest" dest)
+  ;(log-text "ext-word" data)
   ;decodes an address for a single operand instruction
   ;returns:
   ;an integer representing the current value
@@ -419,8 +406,6 @@
 				      data2    ;use the second extension word if
 				      data1)   ;the first was used in the source
 			  b-w)  
-;      (let* ((source-lst (multiple-value-list (address-decode as source data1)))
-;	     (source-val (car source-lst)))
 ;	;(print source-lst)
 	;(log-text "source" source-val)
 	;(format t "~4,'0x" source-val)
